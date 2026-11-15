@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="uk"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="theme-color" content="#0b0d12">
+<title>Paper Meme Trader</title>
+<style>
+:root{--bg:#0b0d12;--c:#141823;--c2:#1c2230;--t:#e8ecf5;--m:#8a94a8;--g:#2ee6a0;--r:#ff5c7a;--a:#4f7cff;color-scheme:dark}
+*{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--t);font:14px system-ui,sans-serif;padding:env(safe-area-inset-top) 0 calc(60px + env(safe-area-inset-bottom))}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;position:sticky;top:0;background:var(--bg);z-index:5}
+.pill{background:var(--c2);border-radius:20px;padding:6px 12px;font-weight:600}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--c);padding-bottom:env(safe-area-inset-bottom);z-index:6}
+nav button{flex:1;padding:14px 0;background:none;border:0;color:var(--m);font-size:12px}
+nav button.on{color:var(--a);font-weight:700}
+.tabs{display:flex;gap:6px;padding:0 14px 10px;overflow-x:auto}
+.tabs button,.chip{background:var(--c2);border:0;color:var(--m);padding:7px 13px;border-radius:16px;font-size:13px;white-space:nowrap}
+.tabs button.on,.chip.on{background:var(--a);color:#fff}
+.row{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-bottom:1px solid var(--c2);gap:8px}
+.s{color:var(--m);font-size:12px;margin-top:3px}small{color:var(--m)}
+.r{text-align:right;display:flex;align-items:center;gap:8px}
+.q{background:var(--a);border:0;color:#fff;border-radius:14px;padding:7px 11px;font-weight:600;white-space:nowrap}
+.tag{background:var(--c2);color:var(--m);border-radius:6px;padding:1px 6px;font-size:10px;margin-left:4px}
+.up{color:var(--g)}.dn{color:var(--r)}
+.ov{position:fixed;inset:0;background:var(--bg);z-index:20;overflow:auto;padding:env(safe-area-inset-top) 0 30px}
+.card{background:var(--c);border-radius:12px;margin:10px 14px;padding:12px}
+canvas{width:100%;height:260px;display:block;background:var(--c);border-radius:12px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+.grid button{padding:11px 0;border:0;border-radius:10px;font-weight:700;color:#04140d;background:var(--g)}
+.grid.sell button{background:var(--r);color:#200309}
+label{display:block;color:var(--m);font-size:11px;margin-top:6px}
+input{width:100%;background:var(--c2);border:1px solid #2a3144;color:var(--t);padding:10px;border-radius:10px;font-size:16px}
+.big{width:100%;padding:12px;border:0;border-radius:10px;background:var(--a);color:#fff;font-weight:700;margin-top:10px}
+#toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#fff;color:#000;padding:10px 16px;border-radius:20px;z-index:50;display:none;font-weight:600;max-width:90%;text-align:center}
+</style></head><body>
+<header><b>◆ PaperTrade</b><div class="pill" id="bal"></div></header>
+<noscript><div class="card">JavaScript вимкнений. Відкрий файл у Safari, а не в перегляді.</div></noscript>
+<main id="main"></main>
+<nav id="nav"></nav>
+<div class="ov" id="tok" hidden>
+ <div class="row"><button class="chip" onclick="closeTok()">← Назад</button><div id="tkHead" class="r"></div></div>
+ <div class="tabs" style="padding-top:10px" id="tfs"></div>
+ <div style="padding:0 14px"><canvas id="cv"></canvas></div>
+ <div class="card" id="tkStats"></div>
+ <div class="card"><b>Купити (SOL)</b><div class="grid" id="buys"></div>
+  <div style="display:flex;gap:8px;margin-top:8px"><input id="cust" type="number" step="any" placeholder="Своя сума SOL"><button class="q" onclick="buy(cur,cust.value)">Buy</button></div>
+  <div class="s" id="fees"></div></div>
+ <div class="card"><b>Продати</b><div class="grid sell" id="sells"></div><div class="s" id="tkPos"></div></div>
+ <div class="card"><b>Авто TP / SL (% від входу)</b><div class="g2"><div><label>Take profit %</label><input id="tp" type="number" placeholder="100"></div><div><label>Stop loss %</label><input id="sl" type="number" placeholder="30"></div></div><button class="big" style="background:var(--c2)" onclick="setTS()">Зберегти TP/SL</button></div>
+</div>
+<div id="toast"></div>
+<script>
+const GT='https://api.geckoterminal.com/api/v2/networks/solana',DX='https://api.dexscreener.com';
+const $=i=>document.getElementById(i);
+const DEF={bal:10,pos:{},hist:[],wl:[],real:0,set:{slip:15,fee:1,prio:0.001,tip:0.001,buys:[0.1,0.5,1,5],sells:[25,50,75,100],quick:0.5},f:{}};
+let S=JSON.parse(JSON.stringify(DEF));
+try{const s=JSON.parse(localStorage.getItem('pmt2')||'{}');Object.assign(S,s);S.set=Object.assign({},DEF.set,s.set||{});S.f=s.f||{}}catch(e){}
+const save=()=>{try{localStorage.setItem('pmt2',JSON.stringify(S))}catch(e){}};
+let view='pulse',sub='trending',list=[],P={},cur=null,tf='5m',C=[],st='load',src='',ERR='',fo=false;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fm=n=>!isFinite(n)||!n?'-':n>=1e6?'$'+(n/1e6).toFixed(2)+'M':n>=1e3?'$'+(n/1e3).toFixed(1)+'K':'$'+n.toFixed(0);
+const fp=x=>!x?'0':x>=1?x.toFixed(2):x.toFixed(Math.min(12,2-Math.floor(Math.log10(x))));
+const pc=v=>v==null||v===''||isNaN(v)?'-':(+v>0?'+':'')+(+v).toFixed(1)+'%';
+const cls=v=>+v>=0?'up':'dn';
+const sol=n=>(+n).toFixed(Math.abs(n)<1?4:3);
+const nv=v=>v===''||v==null||isNaN(+v)?null:+v;
+function age(t){if(!t)return'';const m=(Date.now()-new Date(t))/6e4;return m<60?Math.floor(m)+'хв':m<1440?Math.floor(m/60)+'г':Math.floor(m/1440)+'д'}
+function toast(t){const e=$('toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',2200)}
+async function J(u){try{const r=await fetch(u);if(!r.ok){ERR='HTTP '+r.status;return null}return await r.json()}catch(e){ERR=String(e.message||e);return null}}
+function pg(p){const a=p.attributes,r=p.relationships||{},t=(a.transactions||{}).h1||{};return{addr:a.address,tok:(((r.base_token||{}).data||{}).id||'').replace('solana_',''),name:a.name.split(' / ')[0],priceSol:+a.base_token_price_native_currency,priceUsd:+a.base_token_price_usd,mc:+(a.market_cap_usd||a.fdv_usd)||0,liq:+a.reserve_in_usd||0,vol:+(a.volume_usd||{}).h24||0,ch:a.price_change_percentage||{},created:a.pool_created_at,dex:((r.dex||{}).data||{}).id||'',b:t.buys,s:t.sells}}
+function pd(p){const t=(p.txns||{}).h1||{};return{addr:p.pairAddress,tok:p.baseToken.address,name:p.baseToken.symbol,priceSol:+p.priceNative,priceUsd:+p.priceUsd,mc:+(p.marketCap||p.fdv)||0,liq:+(p.liquidity||{}).usd||0,vol:+(p.volume||{}).h24||0,ch:p.priceChange||{},created:p.pairCreatedAt,dex:p.dexId,b:t.buys,s:t.sells}}
+async function loadList(){
+  let ps=[];src='GeckoTerminal';
+  if(sub==='star'){
+    if(S.wl.length){const j=await J(GT+'/pools/multi/'+S.wl.slice(0,30).join(','));if(j&&j.data)ps=j.data.map(pg)}
+    else{list=[];st='ok';return render()}
+  }else{
+    const path=sub==='new'?'/new_pools':sub==='top'?'/pools?sort=h24_volume_usd_desc':'/trending_pools',sp=path.includes('?')?'&':'?';
+    const rs=await Promise.all([1,2].map(n=>J(GT+path+sp+'page='+n)));
+    rs.forEach(j=>{if(j&&j.data)ps=ps.concat(j.data.map(pg))});
+  }
+  if(!ps.length&&sub!=='star'){
+    const b=await J(DX+'/token-boosts/latest/v1');
+    if(b){const ad=[...new Set(b.filter(x=>x.chainId==='solana').map(x=>x.tokenAddress))].slice(0,30);
+      if(ad.length){const d=await J(DX+'/tokens/v1/solana/'+ad.join(','));
+        if(d){const seen={};ps=d.filter(p=>p.quoteToken&&p.quoteToken.symbol==='SOL'&&!seen[p.baseToken.address]&&(seen[p.baseToken.address]=1)).map(pd);src='DexScreener (резерв, без графіка)'}}}
+  }
+  ps.forEach(x=>P[x.addr]=x);list=ps;st=ps.length?'ok':'fail';
+  if(view==='pulse')render();
+}
+const FL=[['q','Пошук за назвою'],['liqMin','Liq від $'],['liqMax','Liq до $'],['mcMin','MC від $'],['mcMax','MC до $'],['volMin','Vol 24h від $'],['ageMax','Вік до (хв)'],['chMin','Зміна 1h від %']];
+function pass(x){const f=S.f;
+  if(f.q&&!x.name.toLowerCase().includes(f.q.toLowerCase()))return 0;
+  const c=(v,lo,hi)=>(lo==null||v>=lo)&&(hi==null||v<=hi);
+  if(!c(x.liq,nv(f.liqMin),nv(f.liqMax))||!c(x.mc,nv(f.mcMin),nv(f.mcMax))||!c(x.vol,nv(f.volMin),null))return 0;
+  const am=nv(f.ageMax);if(am!=null&&(Date.now()-new Date(x.created))/6e4>am)return 0;
+  const ch=nv(f.chMin);if(ch!=null&&!(+x.ch.h1>=ch))return 0;return 1}
+function applyF(){FL.forEach(([k])=>S.f[k]=$('f_'+k).value);save();render()}
+function clearF(){S.f={};save();render()}
+function star(id){const i=S.wl.indexOf(id);i<0?S.wl.push(id):S.wl.splice(i,1);save();render();updTok()}
+const NAV=[['pulse','🔥 Pulse'],['pos','💼 Позиції'],['hist','🕘 Історія'],['set','⚙️ Налашт.']];
+function rowH(x){return `<div class="row" onclick="openTok('${x.addr}')"><div><b>${esc(x.name)}</b><span class="tag">${esc(x.dex||'')}</span> <small>${age(x.created)}</small><div class="s">MC ${fm(x.mc)} · Liq ${fm(x.liq)} · Vol ${fm(x.vol)}${x.b!=null?` · <span class="up">${x.b}B</span>/<span class="dn">${x.s}S</span>`:''}</div></div><div class="r"><span class="${cls(x.ch.h1)}">${pc(x.ch.h1)}</span><button class="chip" style="padding:6px 9px" onclick="event.stopPropagation();star('${x.addr}')">${S.wl.includes(x.addr)?'★':'☆'}</button><button class="q" onclick="event.stopPropagation();buy('${x.addr}',S.set.quick)">⚡${S.set.quick}</button></div></div>`}
+function render(){
+  $('bal').textContent='◎ '+sol(S.bal);
+  $('nav').innerHTML=NAV.map(([k,l])=>`<button class="${view===k?'on':''}" onclick="view='${k}';render()">${l}</button>`).join('');
+  let h='';
+  if(view==='pulse'){
+    const T=[['new','🆕 Нові'],['trending','📈 Trending'],['top','🏆 Top Vol'],['star','★']];
+    h=`<div class="tabs">${T.map(([k,l])=>`<button class="${sub===k?'on':''}" onclick="sub='${k}';list=[];st='load';loadList();render()">${l}</button>`).join('')}<button class="chip ${fo?'on':''}" onclick="fo=!fo;render()">⚙ Фільтри</button><button class="chip" onclick="st='load';loadList();render()">↻</button></div>`;
+    if(fo)h+=`<div class="card"><div class="g2">${FL.map(([k,l])=>`<div><label>${l}</label><input id="f_${k}" value="${esc(S.f[k]||'')}" ${k==='q'?'':'inputmode="decimal"'}></div>`).join('')}</div><div class="g2"><button class="big" onclick="applyF()">Застосувати</button><button class="big" style="background:var(--c2)" onclick="clearF()">Скинути</button></div></div>`;
+    const sh=list.filter(pass);
+    if(st==='load')h+='<div class="card s">Завантаження реальних токенів…</div>';
+    else if(st==='fail')h+=`<div class="card">⚠️ Не вдалося завантажити дані (${esc(ERR)}).<div class="s">Сторінка відкрита як ${location.protocol}. Перевір інтернет і відкрий через Safari з https-посилання.</div><button class="big" onclick="st='load';loadList();render()">Повторити</button></div>`;
+    else h+=`<div class="s" style="padding:0 14px 6px">Джерело: ${src} · ${sh.length}/${list.length}</div>`+(sh.length?sh.map(rowH).join(''):'<div class="card s">Нічого не підходить під фільтри або список порожній.</div>');
+  }else if(view==='pos'){
+    const ids=Object.keys(S.pos);let tv=0,tc=0;
+    const rows=ids.map(id=>{const o=S.pos[id],p=P[id],v=p?o.amt*p.priceSol:0;tv+=v;tc+=o.cost;const pn=v-o.cost;
+      return `<div class="row" onclick="openTok('${id}')"><div><b>${esc(o.name)}</b><div class="s">Вкладено ◎${sol(o.cost)} · Зараз ◎${sol(v)}${o.tp?' · TP '+o.tp+'%':''}${o.sl?' · SL '+o.sl+'%':''}</div></div><div class="${cls(pn)}">${pn>=0?'+':''}${sol(pn)} ◎<br><small class="${cls(pn)}">${pc(o.cost?pn/o.cost*100:0)}</small></div></div>`}).join('');
+    h=`<div class="card">В позиціях: <b>◎${sol(tv)}</b><br>Нереалізований PnL: <b class="${cls(tv-tc)}">${sol(tv-tc)} ◎</b><br>Реалізований PnL: <b class="${cls(S.real)}">${sol(S.real)} ◎</b></div>`+(ids.length?rows:'<div class="card s">Позицій немає. Купи щось у Pulse.</div>');
+  }else if(view==='hist'){
+    h=S.hist.length?S.hist.map(x=>`<div class="row"><div><b class="${x.t==='BUY'?'up':'dn'}">${x.t}</b> ${esc(x.n)}<div class="s">${new Date(x.d).toLocaleString()}${x.note?' · '+x.note:''}</div></div><div>◎${sol(x.s)}${x.pnl!=null?`<br><small class="${cls(x.pnl)}">PnL ${sol(x.pnl)}</small>`:''}</div></div>`).join(''):'<div class="card s">Порожньо</div>';
+  }else{
+    const q=S.set;
+    h=`<div class="card"><b>Баланс (SOL)</b><input id="sb" type="number" step="any" value="${S.bal}"><button class="big" onclick="S.bal=Math.max(0,+sb.value||0);save();render();toast('Баланс змінено')">Встановити баланс</button></div>
+    <div class="card"><b>Торгівля (як в Axiom)</b><div class="g2"><div><label>Slippage %</label><input id="s_slip" type="number" step="any" value="${q.slip}"></div><div><label>Комісія платформи %</label><input id="s_fee" type="number" step="any" value="${q.fee}"></div><div><label>Priority fee (SOL)</label><input id="s_prio" type="number" step="any" value="${q.prio}"></div><div><label>Tip / bribe (SOL)</label><input id="s_tip" type="number" step="any" value="${q.tip}"></div><div><label>⚡ швидка купівля (SOL)</label><input id="s_quick" type="number" step="any" value="${q.quick}"></div></div>
+    <label>Пресети Buy (через кому)</label><input id="s_buys" value="${q.buys.join(',')}"><label>Пресети Sell % (через кому)</label><input id="s_sells" value="${q.sells.join(',')}"><button class="big" onclick="saveSet()">Зберегти</button></div>
+    <div class="card"><button class="big" style="background:var(--r)" onclick="if(confirm('Скинути все?')){S=JSON.parse(JSON.stringify(DEF));save();render()}">Скинути акаунт</button></div>
+    <div class="s" style="padding:0 14px">Дані: GeckoTerminal / DexScreener. Гроші віртуальні, це навчальний симулятор.</div>`;
+  }
+  $('main').innerHTML=h;
+}
+function saveSet(){const q=S.set,n=(i,d)=>{const v=nv($(i).value);return v==null?d:v},ar=(i,d)=>{const a=$(i).value.split(',').map(Number).filter(v=>v>0);return a.length?a.slice(0,4):d};
+  q.slip=n('s_slip',15);q.fee=n('s_fee',1);q.prio=n('s_prio',0.001);q.tip=n('s_tip',0.001);q.quick=n('s_quick',0.5)||0.5;q.buys=ar('s_buys',q.buys);q.sells=ar('s_sells',q.sells);save();render();toast('Збережено')}
+function impact(p,sol){const usd=sol*(p.priceUsd/p.priceSol);return p.liq>0?usd/(p.liq/2)*100:0}
+function buy(id,amt,auto){
+  const p=P[id],q=S.set;amt=+amt;
+  if(!p||!p.priceSol)return toast('Немає ціни');
+  if(!(amt>0))return toast('Введи суму');
+  if(amt+q.prio+q.tip>S.bal)return toast('Недостатньо балансу');
+  const swap=amt*(1-q.fee/100),imp=impact(p,swap);
+  if(imp>q.slip)return toast(`Slippage: імпакт ${imp.toFixed(1)}% > ${q.slip}%`);
+  const fill=p.priceSol*(1+imp/100),t=swap/fill,fu=p.priceUsd*(1+imp/100),o=S.pos[id]||{name:p.name,amt:0,cost:0,eu:0};
+  o.eu=(o.eu*o.amt+fu*t)/(o.amt+t);o.amt+=t;o.cost+=amt;S.pos[id]=o;S.bal-=amt+q.prio+q.tip;
+  S.hist.unshift({t:'BUY',n:p.name,s:amt,d:Date.now(),note:'імпакт '+imp.toFixed(2)+'%'});S.hist=S.hist.slice(0,100);
+  save();render();updTok();toast('Куплено '+p.name+' за ◎'+sol(amt));
+}
+function sell(id,pct,why){
+  const o=S.pos[id],p=P[id],q=S.set;if(!o||!p)return toast('Немає позиції');
+  const t=o.amt*pct/100,gross=t*p.priceSol,imp=impact(p,gross);
+  if(imp>q.slip&&!why)return toast(`Slippage: імпакт ${imp.toFixed(1)}% > ${q.slip}%`);
+  const out=Math.max(0,gross*(1-imp/100)*(1-q.fee/100)-q.prio-q.tip),cp=o.cost*pct/100;
+  S.bal+=out;S.real+=out-cp;o.amt-=t;o.cost-=cp;if(pct>=100||o.amt<=0)delete S.pos[id];
+  S.hist.unshift({t:'SELL',n:p.name,s:out,pnl:out-cp,d:Date.now(),note:why||''});S.hist=S.hist.slice(0,100);
+  save();render();updTok();toast('Продано, PnL '+sol(out-cp)+' ◎');
+}
+function setTS(){const o=S.pos[cur];if(!o)return toast('Спочатку купи токен');o.tp=+$('tp').value||0;o.sl=+$('sl').value||0;save();toast('TP/SL збережено')}
+function checkTS(){Object.keys(S.pos).forEach(id=>{const o=S.pos[id],p=P[id];if(!o||!p||!o.cost)return;const roi=(o.amt*p.priceSol-o.cost)/o.cost*100;
+  if(o.tp&&roi>=o.tp)sell(id,100,'TP');else if(o.sl&&roi<=-o.sl)sell(id,100,'SL')})}
+async function refreshPos(){
+  const ids=Object.keys(S.pos);if(cur&&!ids.includes(cur))ids.push(cur);if(!ids.length)return;
+  const j=await J(GT+'/pools/multi/'+ids.slice(0,30).join(','));
+  if(j&&j.data)j.data.forEach(p=>{const x=pg(p);P[x.addr]=x});
+  else{const tk=[...new Set(ids.map(i=>P[i]&&P[i].tok).filter(Boolean))];
+    if(tk.length){const d=await J(DX+'/tokens/v1/solana/'+tk.join(','));const done={};
+      if(d)d.filter(p=>p.quoteToken&&p.quoteToken.symbol==='SOL').forEach(p=>{ids.forEach(i=>{if(!done[i]&&P[i]&&P[i].tok===p.baseToken.address){done[i]=1;P[i]=Object.assign(P[i],pd(p),{addr:i})}})})}}
+  checkTS();if(view==='pos')render();updTok();
+}
+const TFS={'1m':['minute',1],'5m':['minute',5],'15m':['minute',15],'1h':['hour',1]};
+async function openTok(id){
+  cur=id;C=[];$('tok').hidden=false;
+  $('buys').innerHTML=S.set.buys.map(v=>`<button onclick="buy(cur,${v})">${v}</button>`).join('');
+  $('sells').innerHTML=S.set.sells.map(v=>`<button onclick="sell(cur,${v})">${v}%</button>`).join('');
+  const o=S.pos[id]||{};$('tp').value=o.tp||'';$('sl').value=o.sl||'';
+  $('fees').textContent=`Комісія ${S.set.fee}% · priority ${S.set.prio} · tip ${S.set.tip} · slippage ${S.set.slip}%`;
+  updTok();draw();
+  const j=await J(GT+'/pools/'+id);if(j&&j.data){const x=pg(j.data);P[id]=Object.assign(P[id]||{},x);updTok()}
+  loadChart();
+}
+function closeTok(){cur=null;$('tok').hidden=true;render()}
+function updTok(){
+  if(!cur)return;const p=P[cur];if(!p)return;
+  $('tfs').innerHTML=Object.keys(TFS).map(k=>`<button class="${tf===k?'on':''}" onclick="tf='${k}';loadChart();updTok()">${k}</button>`).join('');
+  $('tkHead').innerHTML=`<div><b>${esc(p.name)}</b><span class="tag">${esc(p.dex||'')}</span><div class="s">$${fp(p.priceUsd)}</div></div><button class="chip" onclick="star('${cur}')">${S.wl.includes(cur)?'★':'☆'}</button>`;
+  $('tkStats').innerHTML=`<div style="display:flex;justify-content:space-between"><div><small>MC</small><br>${fm(p.mc)}</div><div><small>Liq</small><br>${fm(p.liq)}</div><div><small>Vol 24h</small><br>${fm(p.vol)}</div><div><small>Вік</small><br>${age(p.created)}</div></div><div class="s" style="margin-top:10px">5m <b class="${cls(p.ch.m5)}">${pc(p.ch.m5)}</b> · 1h <b class="${cls(p.ch.h1)}">${pc(p.ch.h1)}</b> · 6h <b class="${cls(p.ch.h6)}">${pc(p.ch.h6)}</b> · 24h <b class="${cls(p.ch.h24)}">${pc(p.ch.h24)}</b></div>${p.b!=null?`<div class="s">Txns 1h: <span class="up">${p.b} buys</span> / <span class="dn">${p.s} sells</span></div>`:''}`;
+  const o=S.pos[cur];
+  $('tkPos').innerHTML=o?`У позиції: ${o.amt.toFixed(0)} токенів · ◎${sol(o.amt*p.priceSol)} · PnL <b class="${cls(o.amt*p.priceSol-o.cost)}">${sol(o.amt*p.priceSol-o.cost)}</b> ◎ (${pc(o.cost?(o.amt*p.priceSol-o.cost)/o.cost*100:0)})`:'Позиції немає';
+  draw();
+}
+async function loadChart(){
+  if(!cur)return;const id=cur,[u,a]=TFS[tf];C=[];draw();
+  const j=await J(`${GT}/pools/${id}/ohlcv/${u}?aggregate=${a}&limit=100`);
+  if(id!==cur)return;
+  C=j&&j.data?j.data.attributes.ohlcv_list.slice().reverse():[];draw(C.length?'':'Графік недоступний ('+ERR+')');
+}
+function draw(msg){
+  const c=$('cv');if(!c||$('tok').hidden)return;
+  const r=c.getBoundingClientRect(),d=devicePixelRatio||1;c.width=r.width*d;c.height=r.height*d;
+  const x=c.getContext('2d');x.scale(d,d);const W=r.width,H=r.height,pad=56;
+  x.fillStyle='#8a94a8';x.font='12px system-ui';
+  if(!C.length){x.fillText(msg||'Завантаження графіка…',16,H/2);return}
+  const hi=Math.max(...C.map(k=>k[2])),lo=Math.min(...C.map(k=>k[3])),rg=(hi-lo)||hi*0.01||1;
+  const Y=v=>8+(hi-v)/rg*(H-16),w=(W-pad)/C.length;
+  x.strokeStyle='#1c2230';
+  for(let i=0;i<5;i++){const y=8+i*(H-16)/4;x.beginPath();x.moveTo(0,y);x.lineTo(W-pad,y);x.stroke();x.fillText(fp(hi-rg*i/4),W-pad+4,y+4)}
+  C.forEach((k,i)=>{const up=k[4]>=k[1];x.strokeStyle=x.fillStyle=up?'#2ee6a0':'#ff5c7a';const cx=i*w+w/2;
+    x.beginPath();x.moveTo(cx,Y(k[2]));x.lineTo(cx,Y(k[3]));x.stroke();
+    x.fillRect(i*w+w*0.15,Math.min(Y(k[1]),Y(k[4])),w*0.7,Math.max(1,Math.abs(Y(k[1])-Y(k[4]))))});
+  const l=C[C.length-1][4];x.setLineDash([4,4]);x.strokeStyle='#4f7cff';x.beginPath();x.moveTo(0,Y(l));x.lineTo(W-pad,Y(l));x.stroke();
+  x.fillStyle='#4f7cff';x.fillText(fp(l),W-pad+4,Y(l)+4);
+  const o=S.pos[cur];if(o&&o.eu&&o.eu<=hi&&o.eu>=lo){x.strokeStyle=x.fillStyle='#f5c542';x.beginPath();x.moveTo(0,Y(o.eu));x.lineTo(W-pad,Y(o.eu));x.stroke();x.fillText('entry',W-pad+4,Y(o.eu)+4)}
+  x.setLineDash([]);
+}
+addEventListener('resize',()=>draw());
+render();loadList();
+setInterval(refreshPos,8000);
+setInterval(()=>{if(view==='pulse'&&!cur&&!fo)loadList();if(cur)loadChart()},20000);
+</script></body></html>
